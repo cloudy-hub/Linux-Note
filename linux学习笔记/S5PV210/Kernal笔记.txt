@@ -1,0 +1,112 @@
+一、linux 3.0.8内核源码目录结构；
+
+./ 指linux-kernel的根目录
+
+平台无关代码目录：
+./include
+./kernel
+./lib
+./mm
+
+平台代码目录 : arch/ 。对应开发板
+
+arch/x86
+arch/arm
+arch/powerpc
+arch/...
+
+以arch/arm为例：
+arch/arm/
+		|--boot
+		|--include
+		|--kernel
+		|--lib
+		|--mm
+		|--mach-xxx
+		|--plat-xxx
+		|--...
+
+所以
+1、平台无关的代码和平台代码形成对应。是对内核的抽象。
+2、具体的C文件中，头文件的包含一般是在./include/ 和 ./arch/xxx/mach-xxx/include/目录两部分（具体的xxx由内核Makefile决定）
+#include "asm/xxx.h"  //CPU体系相关
+#include "linux/xxx.h" //linux内核相关，与平台无关
+#include "plat/xxx.h"  //芯片公司
+#include "mach/xxx.h"  //开发板
+
+二、编译
+编译原理：
+由主目录Makefile进行【 条件&递归 】编译，扫描所有的Makefile，形成目标依赖关系。
+在Makefile中：
+obj-y :  //编译进内核
+obj-  :	 //不编译进内核
+obj-m :	 //编译成模块
+
+编译如何配置：
+Makefile中 SUBARCH  默认为x86,即默认配置x86.
+Q1、配置那种架构？
+Q2、配置交叉编译器为那种？
+Q3、编译哪些文件（配置单）？
+A3:默认由./arch/arm/configs/xxxxx_defconfig选择编译那些文件,导出配置为./.config文件。
+
+make menuconfig操作是重点。
+命令解析：
+make menuconfig ←→ .config  ← Makefile
+Makefile 读取 .config
+menuconfig 由 Kconfig 形成。
+对menuconfig 的配置，实质是对./config文件的设置
+有了./config文件配置（CONFIG_XXXXXXXX）
+那么1、Makefile就可以根据这些CONFIG_变量选择如何编译文件
+那么2、在.c/.h文件中就可以根据这些CONFIG_变量选择如何编译代码段
+那么3、config文件配置（CONFIG_XXXXXXXX）变量就可以进行互相判断（ depons on ）
+CONFIG_XXXXXXXX = y
+CONFIG_XXXXXXXX = m
+CONFIG_XXXXXXXX =  
+
+Kconfig: ./Kconfig (Kbuild语法) 
+相当于包含(source) ./arch/arm/Kconfig
+./arch/arm/Kconfig 中再 【 递归包含 】 子目录中的Kconfig
+
+
+在主目录下（./）：
+make  ：
+等于执行  make Image //obj-y
+		 make modules //obj-m
+
+内核编译：
+vmlinux / Image / zImage /uImage
+vmlinux:ELF文件，经过OBJCOPY命令才可以执行
+uImage 依赖于 zImage 依赖于 Image
+以上文件属于被压缩关系。
+uImage : u --> uboot，专门为uboot提供的内核。需要借助uboot中的tools/mkimage文件
+
+三、添加驱动到内核
+./drivers/ 该目录包含了驱动代码
+./block/ -- 此文件夹包含块设备驱动程序的代码
+./sound/ -- 这个文件夹中包含了声卡驱动
+
+example:
+./drivers/mydeviceDir/myDevice.c
+./drivers/mydeviceDir/Makefile
+./drivers/mydeviceDir/Kconfig
+
+Makefile内容:
+obj-(CONFIG_XXYY) += myDevice.o //注意是否需要其他依赖
+Makefile包含：
+为了让./Makefile可以调用这里的Makefile，
+就需要在上一层的Makefile中包含路径,即 obj-(CONFIG_XXYY) += myDeviceDir/
+
+Kconfig内容：
+menu  "this is myDevice"
+config MYDEVICE
+	bool "support mydevice driver"
+	help 
+		this is a tip.
+endmenu
+Kconfig包含：
+就需要在上一层的Kconfig中包含路径,即/drivers/mydeviceDir/Kconfig
+注意：Kconfig包含是从主目录开始的！
+
+
+
+！！！内核启动流程：

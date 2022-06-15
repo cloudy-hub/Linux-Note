@@ -1,0 +1,46 @@
+//uboot中设置网络信息
+setenv ipaddr 192.168.1.252
+setenv ethaddr 00:04:9f:04:d2:35
+setenv gatewayip 192.168.1.1
+setenv netmask 255.255.255.0
+setenv serverip 192.168.1.251
+
+// uboot中设置网络挂在镜像和设备树
+setenv bootargs 'console=ttymxc0,115200 root=/dev/mmcblk1p2 rootwait rw'
+setenv bootcmd 'tftp 80800000 zImage; tftp 83000000 imx6ull-alientek-emmc.dtb; bootz 80800000 - 83000000'
+
+// uboot中设置网络挂在rootfs
+setenv bootargs 'console=ttymxc0,115200 root=/dev/nfs rw nfsroot=192.168.1.251:/home/hu/study/rootfs_busyBox_imx,v3 ip=192.168.1.252:192.168.1.251:192.168.1.1:255.255.255.0::eth1:off'
+
+//移植声卡库
+cd alsa-lib-1.2.2/ //进入 alsa-lib 源码目录
+./configure --host=arm-linux-gnueabihf --prefix=/home/hu/imx/linux_imx/tool/alsa-lib --with-configdir=/usr/share/arm-alsa
+
+cd alsa-utils-1.2.2/ //进入
+// 这里经过测试需要进行root操作,否则会configure: error: No linkable libasound was found.
+./configure --host=arm-linux-gnueabihf --prefix=/home/hu/imx/linux_imx/tool/alsa-utils --with-alsa-inc-prefix=/home/hu/imx/linux_imx/tool/alsa-lib/include/ --with-alsa-prefix=/home/hu/imx/linux_imx/tool/alsa-lib/lib/ --disable-alsamixer --disable-xmlto
+make //编译
+sudo make install //安装
+
+/home/hu/study/rootfs_imx/bin
+sudo cp bin/* /home/hu/study/rootfs_imx/bin/ -rfa
+sudo cp sbin/* /home/hu/study/rootfs_imx/sbin/ -rfa
+sudo cp share/* /home/hu/study/rootfs_imx/usr/share/ -rfa
+
+aplay -D plughw:0,1 /music/SoundTest.wav
+
+orangepi
+sudo modprobe fbtft_device custom name=fb_st7789v busnum=0 cs=0 gpios=reset:73,dc:72,led:71 rotate=90 speed=36000000 bgr=1
+sudo fbi -vt 1 -noverbose -d /dev/fb8 /boot/boot.bmp
+sudo con2fbmap 1 8
+
+nmcli dev wifi  //扫描周围WIFI热点
+nmcli dev wifi connect Cloudy password 79135555
+
+export QTDIR=/opt/qt_lib_orangepi_5.9.5    #qtsdk在系统上的路径
+export QT_QPA_FONTDIR=$QTDIR/lib/fonts 
+export QT_QPA_PLATFORM_PLUGIN_PATH=$QTDIR/plugins/ 
+export LD_LIBRARY_PATH=$QTDIR/lib:$LD_LIBRARY_PATH 
+export QT_QPA_PLATFORM=linuxfb:fb=/dev/fb8    #framebuffer驱动
+export QWS_MOUSE_PROTO=/dev/input/event0
+

@@ -1,0 +1,183 @@
+./ 代表uboot根目录
+
+uboot程序的链接是由链接脚本来决定的，所以通过链接脚本可以找到程序的入口
+
+uboot被编译完成之后生成地址u-boot.map文件，可以查看各个段信息的始末地址和大小
+uboot起点：_start 在文件 arch/arm/lib/vectors.S 中
+
+./arch/arm/lib/vectors.S
+_start:
+中断向量表
+b reset
+
+@reset：在arch/arm/cpu/armv7/start.S
+{
+	b save_boot_params
+	@ save_boot_params
+	{
+	b save_boot_params_ret
+	}
+	@save_boot_params_ret
+	{
+	设置CPU工作模式
+	关闭中断FIQ和IRQ
+	设置中断向量表地址
+	bl cpu_init_cp15@只在IRAM中运行，DDR中不运行
+	bl cpu_init_crit
+	bl _main
+	}
+
+}
+
+@cpu_init_cp15
+{
+	关闭缓存
+	关闭MMU
+	关闭balabala...
+}
+@cpu_init_crit
+{
+	b lowlevel_init
+}
+
+@ lowlevel_init 在文件 arch/arm/cpu/armv7/lowlevel_init.S 中定义
+{
+	设置临时栈
+	bl s_init;  //带返回l
+}
+@s_init 函数定义在文件arch/arm/cpu/armv7/mx6/soc.c 中
+{
+	判断CPU型号
+}
+@_main 函数定义在文件 arch/arm/lib/crt0.S 中
+{
+	设置SP指针
+	bl board_init_f_alloc_reserve
+	将gd返回值的内容存入R9寄存器
+	bl board_init_f_init_reserve
+	bl board_init_f
+	b relocate_code
+	bl relocate_vectors
+	bl c_runtime_cpu_setup
+//	bl spl_relocate_stack_gd
+//	bl memset
+//	blo clbss_l
+//	bl coloured_LED_init
+//	bl red_led_on
+	ldr pc, =board_init_r
+}
+@board_init_f_alloc_reserve 此函数定义在文件common/init/board_init.c 中
+{
+留出早期的 malloc 内存区域和 gd 内存区域
+返回gd变量的地址数值
+}
+@board_init_f_init_reserve，文件common/init/board_init.c 中
+{
+此函数用于初始化 gd，其实就是清零处理
+}
+@board_init_f 此函数定义在文件 common/board_f.c 中
+{
+用下列来初始化 DDR，定时器,打印消息
+if (initcall_run_list(init_sequence_f))
+	hang();
+@============init_sequence_f 初始化函数的数组===========
+{
+关于gd的部分初始化
+驱动模型
+配置串口IO
+定时器
+初始化串口，设置波特率
+console设置
+打印信息
+记录DRAM大小
+为后面，搬运uboot做准备，记录部分代码段的始末地址和大小
+留出设备树内存
+}
+}
+@relocate_code 此函数定义在文件 arch/arm/lib/relocate.S 中
+{
+用于代码拷贝
+函数 copy_loop 完成代码拷贝工作
+-----------搬运结束后：---------------
+使用“-pie”选项以后会生成一个.rel.dyn 段，uboot 就是靠这个.rel.dyn 来解决重定位问题
+}
+@relocate_vectors 定义在文件arch/arm/lib/relocate.S 中
+{
+	将新的向量表首地址写入到寄存器 VBAR 中
+}
+@c_runtime_cpu_setup 此函数定义在文件 arch/arm/cpu/armv7/start.S 中，
+{
+ 失效 icache
+ DSB，数据同步屏障。多核CPU相关...
+	ISB，指令同步屏障
+}
+@board_init_r 数定义在文件 common/board_r.c 中
+{
+if (initcall_run_list(init_sequence_r))
+	hang();
+	@============init_sequence_r 初始化函数的数组===========
+	{
+	board_init 函数，板级初始化
+	stdio
+	串口
+	EMMC/NAND
+	环境变量
+	initr_secondary_cpu 函数，初始化其他 CPU 核
+	stdio_add_devices 函数，各种输入输出设备的初始化，如 LCD driver
+	初始化中断
+	初始化网络地址
+	run_main_loop 主循环，处理命令
+	}
+}
+@run_main_loop 文件common/board_r.c 中
+{
+	for(;;)
+	main_loop();
+}
+
+@main_loop main_loop 函数定义在文件 common/main.c 里面
+{
+ bootstage_mark_name();//打印启动进度
+ setenv(); // 设置uboot版本日期
+cli_init(); //初始化 hush shell 相关的变量
+bootdelay_process(); //环境变量相关
+autoboot_command();//检查是否有按键，自动启动
+cli_loop(); //执行cmd
+}
+
+@bootz 启动linux内核过程
+{
+	do_bootz();
+	{
+		bootz_start();
+		@bootz_start
+		{
+		do_bootm_states();
+		获取linux镜像
+		bootm_find_images();//查找设备树文件和ramdisk文件
+		}
+		bootm_disable_interrupts()//关闭中断
+		do_bootm_states();
+		@do_bootm_states
+		{
+		bootm_os_get_boot_func();//获取linux系统启动函数
+		...
+		boot_selected_os();
+		@boot_selected_os
+		{
+			boot_fn();
+			@boot_fn
+			{
+			boot_prep_linux();//设备树添加节点，存放bootargs。。。
+			boot_jump_linux();
+			@boot_jump_linux
+			{
+			announce_and_cleanup();//
+			kernel_entry();//启动内核
+			}
+			}
+		}
+		}
+		
+	}
+}

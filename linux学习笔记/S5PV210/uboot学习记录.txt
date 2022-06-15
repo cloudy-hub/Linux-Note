@@ -1,0 +1,234 @@
+2021-5-6
+
+视频地址：https://www.bilibili.com/video/BV1s4411t7eT?p=2&spm_id_from=pageDriver
+
+基于S59V210
+uboot版本：2012-10
+uboot入口：start.S(位于uboot/arch/arm/cpu/armv7/start.S)
+
+
+uboot启动分析：
+
+执行的是uboot.16K文件
+从start.S开始：
+#include 包含的文件由两部分（uboot/include 和 arch/arm/include）,包含定义在顶层Makefile文件中
+
+复位 
+b reset 
+异常处理，根据SPL决定
+{
+	if( IS_SPL )
+	{
+		跳转到异常向量表
+	}else
+		死循环
+}
+@另外,如果在DDR中发生异常，根据[ VBAR ]寄存器内容决定跳转到DDR中的地址
+
+reset:
+	b save_boot_parmates @I.MX中传递参数
+{
+	设置CPU工作模式,SVC
+	禁止中断
+} 
+-------start-------
+@两者都是伪指令，在一起就是计算__XX函数的大小 = __XX
+@ENTRY
+@ENDPROC
+@ENTRY(_XX)  -->
+.global _XX
+	.ALIGN 4
+	_XX:
+	//bx lr
+@ENDPROC(__XX)-->
+.type __XX, STT_FUNC;
+.size __XX, .-__XX
+----------end---------
+
+@设置寄存器
+[ CP15 ]，处理协处理寄存器
+[ VBAR ],异常向量表基地址映射；发生异常后，程序跳到那里？0xffff0000,0x0，或者是[ VBAR ]寄存器中的地址
+
+@只在IRAM中运行，DDR中不运行
+bl cpu_init_cp15
+bl cpu_init_crit
+------start-------
+@cpu_init_cp15
+失效TLB,Cache中的page table,
+失效指令缓存，（Instruction Cache）
+失效BP,分支预测（Branch predictor）
+DSB，数据同步屏障。多核CPU相关...
+ISB，指令同步屏障
+失能MMU和cache
+@cpu_init_crit
+b lowlevel_init //返回时到bl cpu_init_crit下一条指令
+------end-------
+call_board_init_f:
+	为C语言初始化环境，设置堆栈（SP指针）
+	设置C语言入参（ ldr r0,=0x00000000 ）
+	bl board_init_f
+@board_init_f 位于C文件(board.c)中
+
+relocate_code：
+	.....
+	跳转到 board_init_r 函数（uboot自举之后的函数，位于Board.c中国）
+
+----@file lowlevel_init.S---start-----
+lowlevel_init:
+分析方法：用xlsx分析，[ R0 ~ R15 ]的数据变化
+芯片型号判断
+复位方式判断
+点亮开机灯
+复位S5PV210芯片内部的同步寄存器
+@EVT0、EVT1,内篇内部的子版本号（代表硬件版本号）
+IO保持
+关闭Watchdog
+设置SRAM
+禁止全部中断interrupt
+设置全部中断为IRQ，并非FIQ
+清楚全部中断标志位
+bl uart_asm_init
+bl ddrmem_init @@讲师添加部分
+bl internal_ram_init
+------start-------
+@uart_asm_init
+{
+设置GPIO模式为串口模式（UART_1、2、3、4）
+配置UART相关寄存器
+@制作一个可以输出任意寄存器的小工具利与调试
+@ddrmem_init
+DDR2 配置过程...
+@internal_ram_init
+作用不大
+------end-------
+--作用不大的一段--
+ mov pc,lr //跳转到b lowlevel_init@start.S文件中的下一条指令
+}
+----@file lowlevel_init.S----end----
+
+----@file board.c---start-----
+gb_t类型数据：
+{
+bd_t:板子相关的结构
+串口数据
+设备初始化完成标记
+环境变量参数
+fb的基地址
+显示器的logo
+定时器相关参数
+系统主时钟相关参数
+PLL相关参数
+uboot的自举参数
+跳转表
+env_buf,buffer for getenv()
+}
+gb_t[全局变量]的定义需要放在寄存器（快速访问，[ r8 ]），防止被优化（编译器）\
+编译链接文件将start.o放在最前面，所以start.o中的.data段也在最前面
+
+----开始分析board_init_f函数:---
+调整gd_t中的内容在DDR中的位置。
+遇到 memset() 程序跑飞（跑飞原因是memset()在编译的时候，链接地址>16K，当前执行的文件是uboot.16K），解决方法在执行该方法之前，将uboot.bin文件搬运到DDR中去执行。
+----开始搬运
+如何搬运，在CPU内部的IROM中厂家烧录的相关的搬运程序，直接调用即可
+搬运结束后：
+1、进入当前函数前,即在start.s文件中记录程序的运行地址偏移(当前board_init_f函数的地址相对于链接文件的链接开始地址)
+2、进入当前函数前,将PC指针指向链接起始地址+地址偏移处
+3、修改./include/configs/s5p_goni.h文件，中的RAM、串口配置
+------结束搬运
+
+计算并记录uboot.bin文件的各个段地址和大小
+----uboot.bin---段介绍---start
+start.o
+*(.text)
+*(.rodata)
+*(.data)
+*(.u_boot_cmd)
+*(.rel)
+*(.dynsym)
+*(.mmutable)
+*(.bss)
+----uboot.bin---段介绍---end
+
+for(init_sequence;*init_fnc_ptr;++init_fnc_ptr)
+	(*init_fnc_ptr)();
+@for(init_sequence)
+{
+	*init_sequence[]，函数指针数组。代表了需要初始化的各个函数集合
+	主要包含；
+	cpu_init,//
+	env_init,
+	init_baudrate,
+	serial_init,
+	console_init,
+	display_banner,
+	print_cpuinfo,
+	checkboard,
+	dram_init,
+
+	这是uboot移植到目标板子的核心。
+}
+继续补充。
+1、计算并记录uboot.bin文件的各个段地址和大小
+2、计算，根据宏定义，结构体的sizeof
+3、记录，记录在gb_t的全局变量中。用于后续的uboot自举使用。
+relocate_code
+@relocate_code 开始uboot的自举程序，在start.s文件中
+----结束分析board_init_f函数:---
+
+@board_init_r
+{
+将gd_t的指针[ R8 ],赋予新的自举之后的地址
+enable_cache();//Cache.c,uboot打印信息
+board_init();//goni.c
+serial_initialize();//将uart0的标记位console的设备，后面用于初始化stdio。单向链表
+....
+env_init();//初始化环境变量，创建哈希表
+stdio_init();//
+serial_stdio_init();
+for(;;)
+main_loop();  //启动内核，或者等待命令
+}
+@stdio_init();
+{
+	INIT_LIST_HEAD();//初始化设备列表//涉及到双向链表
+	drv_system_init();//将stdio设备的输入&输出方法指向串口输入输出
+	serial_stdio_init();
+	jumptable_init();//设置uboot函数指针
+	console_init_r();//
+}
+@drv_system_init();
+{
+		stdio.register();
+}
+@stdio.register();
+{
+	将drv_system_init()堆栈(后续会被linux内核清掉)中的数据保存到全局静态TOTAL_MALLOC_LEN中
+	list_add_tail();//双向链表注册设备,难点
+}
+@console_init_r();
+{
+	对stdio_devices进行循环遍历
+	对带有标记的设备初始化为console设备，并且进行打印
+}
+----@file board.c-----end-----
+
+uboot向linux内核传递参数命令：bootm
+编译linux得到zImage，用uboot中的命令(./tools/mkimage)将zImage处理在起始地址中添加64字节的数据形成uImage。
+uboot将linxu内核从SD卡加载到SDRAM中，再将程序指针指向uImage开始地址，将linux的启动参数以tag格式放到SDRAM低位置处.
+
+64字节头部：
+image_number:a/b = c --> a * image_number = c.
+
+Cmd_bootm.c分析
+do_bootm{}
+{
+
+	bootm_start();
+
+
+}
+@bootm_start();
+{
+
+
+}
